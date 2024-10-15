@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/gob"
 	"errors"
 	"flag"
 	"fmt"
 	"go/types"
+	"os"
+	"os/exec"
 	"strings"
 
 	"go.uber.org/mock/mockgen/model"
@@ -12,6 +15,7 @@ import (
 )
 
 var (
+	execOnly   = flag.String("exec_only", "", "(package mode) If set, execute this program instead of using default package loading.")
 	buildFlags = flag.String("build_flags", "", "(package mode) Additional flags for go build.")
 )
 
@@ -20,6 +24,10 @@ type packageModeParser struct {
 }
 
 func (p *packageModeParser) parsePackage(packageName string, ifaces []string) (*model.Package, error) {
+	if *execOnly != "" {
+		return run(*execOnly)
+	}
+
 	p.pkgName = packageName
 
 	pkg, err := p.loadPackage(packageName)
@@ -37,6 +45,45 @@ func (p *packageModeParser) parsePackage(packageName string, ifaces []string) (*
 		PkgPath:    packageName,
 		Interfaces: interfaces,
 	}, nil
+}
+
+// run the given program and parse the output as a model.Package.
+func run(program string) (*model.Package, error) {
+	f, err := os.CreateTemp("", "")
+	if err != nil {
+		return nil, err
+	}
+
+	filename := f.Name()
+	defer os.Remove(filename)
+	if err := f.Close(); err != nil {
+		return nil, err
+	}
+
+	// Run the program.
+	cmd := exec.Command(program, "-output", filename)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return nil, err
+	}
+
+	f, err = os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	// Process output.
+	var pkg model.Package
+	if err := gob.NewDecoder(f).Decode(&pkg); err != nil {
+		return nil, err
+	}
+
+	if err := f.Close(); err != nil {
+		return nil, err
+	}
+
+	return &pkg, nil
 }
 
 func (p *packageModeParser) loadPackage(packageName string) (*packages.Package, error) {

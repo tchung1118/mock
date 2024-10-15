@@ -118,6 +118,8 @@ It supports the following flags:
 
 - `-debug_parser`: Print out parser results only.
 
+- `-exec_only`: (package mode) If set, execute this program instead of using default package loading.
+
 - `-write_package_comment`: Writes package documentation comment (godoc) if true. (default true)
 
 - `-write_generate_directive`: Add //go:generate directive to regenerate the mock. (default false)
