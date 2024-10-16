@@ -4,15 +4,19 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"go/token"
 	"go/types"
+	"os"
 	"strings"
 
 	"go.uber.org/mock/mockgen/model"
+	"golang.org/x/tools/go/gcexportdata"
 	"golang.org/x/tools/go/packages"
 )
 
 var (
-	buildFlags = flag.String("build_flags", "", "(package mode) Additional flags for go build.")
+	buildFlags  = flag.String("build_flags", "", "(package mode) Additional flags for go build.")
+	archiveFlag = flag.String("archive", "", "(package mode) Archive file to load types from.")
 )
 
 type packageModeParser struct {
@@ -22,21 +26,54 @@ type packageModeParser struct {
 func (p *packageModeParser) parsePackage(packageName string, ifaces []string) (*model.Package, error) {
 	p.pkgName = packageName
 
-	pkg, err := p.loadPackage(packageName)
+	pkgTypes, err := p.loadPackageTypes()
 	if err != nil {
 		return nil, fmt.Errorf("load package: %w", err)
 	}
 
-	interfaces, err := p.extractInterfacesFromPackage(pkg, ifaces)
+	interfaces, err := p.extractInterfacesFromPackage(pkgTypes, ifaces)
 	if err != nil {
 		return nil, fmt.Errorf("extract interfaces from package: %w", err)
 	}
 
 	return &model.Package{
-		Name:       pkg.Types.Name(),
+		Name:       pkgTypes.Name(),
 		PkgPath:    packageName,
 		Interfaces: interfaces,
 	}, nil
+}
+
+func (p *packageModeParser) loadPackageTypes() (*types.Package, error) {
+	if *archiveFlag != "" {
+		return p.loadArchive(*archiveFlag, p.pkgName)
+	}
+
+	pkg, err := p.loadPackage(p.pkgName)
+	if err != nil {
+		return nil, fmt.Errorf("load package: %w", err)
+	}
+
+	return pkg.Types, nil
+}
+
+func (p *packageModeParser) loadArchive(archivePath string, packageName string) (*types.Package, error) {
+	f, err := os.Open(archivePath)
+	if err != nil {
+		return nil, fmt.Errorf("open archive file %q: %w", archivePath, err)
+	}
+	defer f.Close()
+
+	r, err := gcexportdata.NewReader(f)
+	if err != nil {
+		return nil, fmt.Errorf("prepare reader for archive file %q: %w", archivePath, err)
+	}
+	fset := token.NewFileSet()
+	pkgs := make(map[string]*types.Package)
+	pkg, err := gcexportdata.Read(r, fset, pkgs, packageName)
+	if err != nil {
+		return nil, fmt.Errorf("read archive file %q: %w", archivePath, err)
+	}
+	return pkg, nil
 }
 
 func (p *packageModeParser) loadPackage(packageName string) (*packages.Package, error) {
@@ -70,10 +107,10 @@ func (p *packageModeParser) loadPackage(packageName string) (*packages.Package, 
 	return pkgs[0], nil
 }
 
-func (p *packageModeParser) extractInterfacesFromPackage(pkg *packages.Package, ifaces []string) ([]*model.Interface, error) {
+func (p *packageModeParser) extractInterfacesFromPackage(pkgTypes *types.Package, ifaces []string) ([]*model.Interface, error) {
 	interfaces := make([]*model.Interface, len(ifaces))
 	for i, iface := range ifaces {
-		obj := pkg.Types.Scope().Lookup(iface)
+		obj := pkgTypes.Scope().Lookup(iface)
 		if obj == nil {
 			return nil, fmt.Errorf("interface %s does not exist", iface)
 		}
