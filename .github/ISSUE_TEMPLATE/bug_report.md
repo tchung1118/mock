@@ -19,7 +19,7 @@ happen.
 
 **Additional Information**
 
--   gomock mode (reflect or source):
+-   gomock mode (package or source):
 -   gomock version or git ref:
 -   golang version:
 
